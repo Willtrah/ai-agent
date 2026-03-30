@@ -6,7 +6,7 @@ from flask import Flask, request
 app = Flask(__name__)
 
 # ================================
-# API KEYS
+# VARIABLES
 # ================================
 
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
@@ -14,8 +14,11 @@ OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
+RAILWAY_URL = "https://ai-agent-production-9fff.up.railway.app"
+
+
 # ================================
-# TELEGRAM SEND MESSAGE
+# TELEGRAM SEND
 # ================================
 
 def send_message(chat_id, text):
@@ -51,19 +54,13 @@ def ask_openai(prompt):
             ]
         }
 
-        response = requests.post(url, headers=headers, json=data, timeout=60)
+        response = requests.post(url, headers=headers, json=data)
 
         elapsed = round(time.time() - start, 2)
 
-        if response.status_code != 200:
-            return f"Erreur OpenAI HTTP ({elapsed}s): {response.text[:300]}"
-
         result = response.json()
 
-        if "choices" not in result:
-            return f"Erreur OpenAI format ({elapsed}s): {str(result)[:300]}"
-
-        return f"{result['choices'][0]['message']['content']}\n({elapsed}s)"
+        return f"{result['choices'][0]['message']['content']} ({elapsed}s)"
 
     except Exception as e:
         return f"Erreur OpenAI : {str(e)}"
@@ -89,26 +86,17 @@ def ask_claude(prompt):
             "model": "claude-sonnet-4-6",
             "max_tokens": 1000,
             "messages": [
-                {
-                    "role": "user",
-                    "content": prompt
-                }
+                {"role": "user", "content": prompt}
             ]
         }
 
-        response = requests.post(url, headers=headers, json=data, timeout=60)
+        response = requests.post(url, headers=headers, json=data)
 
         elapsed = round(time.time() - start, 2)
 
-        if response.status_code != 200:
-            return f"Erreur Claude HTTP ({elapsed}s): {response.text[:300]}"
-
         result = response.json()
 
-        if "content" not in result:
-            return f"Erreur Claude format ({elapsed}s): {str(result)[:300]}"
-
-        return f"{result['content'][0]['text']}\n({elapsed}s)"
+        return f"{result['content'][0]['text']} ({elapsed}s)"
 
     except Exception as e:
         return f"Erreur Claude : {str(e)}"
@@ -138,25 +126,22 @@ def ask_gemini(prompt):
             ]
         }
 
-        response = requests.post(url, headers=headers, json=data, timeout=60)
+        response = requests.post(url, headers=headers, json=data)
 
         elapsed = round(time.time() - start, 2)
-
-        if response.status_code != 200:
-            return f"Erreur Gemini HTTP ({elapsed}s): {response.text[:300]}"
 
         result = response.json()
 
         text = result["candidates"][0]["content"]["parts"][0]["text"]
 
-        return f"{text}\n({elapsed}s)"
+        return f"{text} ({elapsed}s)"
 
     except Exception as e:
         return f"Erreur Gemini : {str(e)}"
 
 
 # ================================
-# NOVA5 MULTI IA
+# MULTI IA
 # ================================
 
 def multi_ai(prompt):
@@ -165,8 +150,9 @@ def multi_ai(prompt):
     claude = ask_claude(prompt)
     gemini = ask_gemini(prompt)
 
-    response = f"""
+    return f"""
 🤖 NOVA5 — MULTI IA
+
 ---------------------
 
 🧠 OPENAI
@@ -184,11 +170,22 @@ def multi_ai(prompt):
 
 ---------------------
 
-Nova5 actif.
-Utilise /compare question
+Nova5 actif
 """
 
-    return response
+
+# ================================
+# AUTO WEBHOOK
+# ================================
+
+@app.route("/setwebhook")
+def set_webhook():
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook?url={RAILWAY_URL}"
+
+    r = requests.get(url)
+
+    return r.text
 
 
 # ================================
@@ -217,13 +214,13 @@ def webhook():
 
         else:
 
-            send_message(chat_id, "Nova5 actif. Utilise /compare question")
+            send_message(chat_id, "Nova5 actif. Utilise /compare")
 
     return "ok"
 
 
 # ================================
-# HEALTH CHECK
+# HEALTH
 # ================================
 
 @app.route("/", methods=["GET"])
@@ -236,4 +233,7 @@ def home():
 # ================================
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
+
+    port = int(os.environ.get("PORT", 8080))
+
+    app.run(host="0.0.0.0", port=port)
