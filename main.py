@@ -1,229 +1,239 @@
 import os
-import time
-import logging
-import threading
-
-from flask import Flask, request
-
 import requests
-
-# ================================
-# Configuration
-# ================================
-
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-
-logging.basicConfig(level=logging.INFO)
+import time
+from flask import Flask, request
 
 app = Flask(__name__)
 
-print("AI Multi-Agent System Started")
-
-
 # ================================
-# OpenAI
+# API KEYS
 # ================================
 
-def ask_openai(prompt):
-
-    url = "https://api.openai.com/v1/chat/completions"
-
-    headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    data = {
-        "model": "gpt-4.1-mini",
-        "messages": [
-            {"role": "user", "content": prompt}
-        ]
-    }
-
-    response = requests.post(url, headers=headers, json=data)
-    result = response.json()
-
-    return result["choices"][0]["message"]["content"]
-
+TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY")
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 # ================================
-# Claude
+# TELEGRAM SEND MESSAGE
 # ================================
 
-def ask_claude(prompt):
-
-    url = "https://api.anthropic.com/v1/messages"
-
-    headers = {
-        "x-api-key": ANTHROPIC_API_KEY,
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json"
-    }
-
-    data = {
-        "model": "claude-3-sonnet-20240229",
-        "max_tokens": 1000,
-        "messages": [
-            {"role": "user", "content": prompt}
-        ]
-    }
-
-    response = requests.post(url, headers=headers, json=data)
-    result = response.json()
-
-    return result["content"][0]["text"]
-
-
-# ================================
-# Gemini
-# ================================
-
-def ask_gemini(prompt):
-
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
-
-    headers = {
-        "Content-Type": "application/json"
-    }
-
-    data = {
-        "contents": [
-            {
-                "parts": [
-                    {"text": prompt}
-                ]
-            }
-        ]
-    }
-
-    response = requests.post(url, headers=headers, json=data)
-    result = response.json()
-
-    return result["candidates"][0]["content"]["parts"][0]["text"]
-
-
-# ================================
-# Multi IA réel
-# ================================
-
-def ask_all_models(prompt):
-
-    responses = {}
-
-    try:
-        start = time.time()
-        responses["openai"] = ask_openai(prompt)
-        responses["openai_time"] = round(time.time() - start, 2)
-    except Exception as e:
-        responses["openai"] = f"Erreur OpenAI : {e}"
-
-    try:
-        start = time.time()
-        responses["claude"] = ask_claude(prompt)
-        responses["claude_time"] = round(time.time() - start, 2)
-    except Exception as e:
-        responses["claude"] = f"Erreur Claude : {e}"
-
-    try:
-        start = time.time()
-        responses["gemini"] = ask_gemini(prompt)
-        responses["gemini_time"] = round(time.time() - start, 2)
-    except Exception as e:
-        responses["gemini"] = f"Erreur Gemini : {e}"
-
-    return responses
-
-
-# ================================
-# Compare
-# ================================
-
-def compare_models(prompt):
-
-    results = ask_all_models(prompt)
-
-    return f"""
-
-🤖 NOVA5 — MULTI IA
-
----------------------
-
-🧠 OPENAI ({results.get('openai_time','?')}s)
-
-{results['openai']}
-
----------------------
-
-🧠 CLAUDE ({results.get('claude_time','?')}s)
-
-{results['claude']}
-
----------------------
-
-🧠 GEMINI ({results.get('gemini_time','?')}s)
-
-{results['gemini']}
-
-"""
-
-
-# ================================
-# Telegram
-# ================================
-
-def send_telegram(chat_id, text):
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+def send_message(chat_id, text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
 
     data = {
         "chat_id": chat_id,
-        "text": text[:4000]
+        "text": text
     }
 
-    requests.post(url, data=data)
+    requests.post(url, json=data)
 
+
+# ================================
+# OPENAI
+# ================================
+
+def ask_openai(prompt):
+    try:
+        start = time.time()
+
+        url = "https://api.openai.com/v1/chat/completions"
+
+        headers = {
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json"
+        }
+
+        data = {
+            "model": "gpt-4.1-mini",
+            "messages": [
+                {"role": "user", "content": prompt}
+            ]
+        }
+
+        response = requests.post(url, headers=headers, json=data, timeout=60)
+
+        elapsed = round(time.time() - start, 2)
+
+        if response.status_code != 200:
+            return f"Erreur OpenAI HTTP ({elapsed}s): {response.text[:300]}"
+
+        result = response.json()
+
+        if "choices" not in result:
+            return f"Erreur OpenAI format ({elapsed}s): {str(result)[:300]}"
+
+        return f"{result['choices'][0]['message']['content']}\n({elapsed}s)"
+
+    except Exception as e:
+        return f"Erreur OpenAI : {str(e)}"
+
+
+# ================================
+# CLAUDE
+# ================================
+
+def ask_claude(prompt):
+    try:
+        start = time.time()
+
+        url = "https://api.anthropic.com/v1/messages"
+
+        headers = {
+            "x-api-key": ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
+        }
+
+        data = {
+            "model": "claude-sonnet-4-6",
+            "max_tokens": 1000,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": prompt
+                }
+            ]
+        }
+
+        response = requests.post(url, headers=headers, json=data, timeout=60)
+
+        elapsed = round(time.time() - start, 2)
+
+        if response.status_code != 200:
+            return f"Erreur Claude HTTP ({elapsed}s): {response.text[:300]}"
+
+        result = response.json()
+
+        if "content" not in result:
+            return f"Erreur Claude format ({elapsed}s): {str(result)[:300]}"
+
+        return f"{result['content'][0]['text']}\n({elapsed}s)"
+
+    except Exception as e:
+        return f"Erreur Claude : {str(e)}"
+
+
+# ================================
+# GEMINI
+# ================================
+
+def ask_gemini(prompt):
+    try:
+        start = time.time()
+
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_API_KEY}"
+
+        headers = {
+            "Content-Type": "application/json"
+        }
+
+        data = {
+            "contents": [
+                {
+                    "parts": [
+                        {"text": prompt}
+                    ]
+                }
+            ]
+        }
+
+        response = requests.post(url, headers=headers, json=data, timeout=60)
+
+        elapsed = round(time.time() - start, 2)
+
+        if response.status_code != 200:
+            return f"Erreur Gemini HTTP ({elapsed}s): {response.text[:300]}"
+
+        result = response.json()
+
+        text = result["candidates"][0]["content"]["parts"][0]["text"]
+
+        return f"{text}\n({elapsed}s)"
+
+    except Exception as e:
+        return f"Erreur Gemini : {str(e)}"
+
+
+# ================================
+# NOVA5 MULTI IA
+# ================================
+
+def multi_ai(prompt):
+
+    openai = ask_openai(prompt)
+    claude = ask_claude(prompt)
+    gemini = ask_gemini(prompt)
+
+    response = f"""
+🤖 NOVA5 — MULTI IA
+---------------------
+
+🧠 OPENAI
+{openai}
+
+---------------------
+
+🧠 CLAUDE
+{claude}
+
+---------------------
+
+🧠 GEMINI
+{gemini}
+
+---------------------
+
+Nova5 actif.
+Utilise /compare question
+"""
+
+    return response
+
+
+# ================================
+# WEBHOOK TELEGRAM
+# ================================
 
 @app.route("/", methods=["POST"])
-def telegram_webhook():
+def webhook():
 
     data = request.json
 
-    message = data.get("message", {})
-    chat_id = message.get("chat", {}).get("id")
-    text = message.get("text", "")
+    if "message" in data:
 
-    if not text:
-        return "ok"
+        chat_id = data["message"]["chat"]["id"]
+        text = data["message"].get("text", "")
 
-    if text.startswith("/compare"):
+        if text.startswith("/compare"):
 
-        question = text.replace("/compare", "").strip()
+            prompt = text.replace("/compare", "").strip()
 
-        send_telegram(chat_id, "Nova5 analyse multi-IA...")
+            send_message(chat_id, "Nova5 analyse multi-IA...")
 
-        response = compare_models(question)
+            result = multi_ai(prompt)
 
-        send_telegram(chat_id, response)
+            send_message(chat_id, result)
 
-    else:
+        else:
 
-        send_telegram(chat_id, "Nova5 actif. Utilise /compare question")
+            send_message(chat_id, "Nova5 actif. Utilise /compare question")
 
     return "ok"
 
 
 # ================================
-# Heartbeat
+# HEALTH CHECK
 # ================================
 
-def heartbeat():
-
-    while True:
-        logging.info("Heartbeat OK")
-        time.sleep(60)
+@app.route("/", methods=["GET"])
+def home():
+    return "Nova5 Online"
 
 
-threading.Thread(target=heartbeat, daemon=True).start()
+# ================================
+# RUN
+# ================================
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=8080)
