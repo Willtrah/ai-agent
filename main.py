@@ -15,6 +15,40 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
 
 TIMEOUT = 30
 
+# Mode par chat
+# "auto" = une IA choisie automatiquement
+# "multi" = les 3 IA à chaque question
+CHAT_MODES = {}
+
+# ==============================
+# HELPERS
+# ==============================
+
+def send_telegram(chat_id, text):
+    if not TELEGRAM_TOKEN:
+        return
+
+    chunks = [text[i:i+3900] for i in range(0, len(text), 3900)]
+
+    for chunk in chunks:
+        requests.post(
+            f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": chunk
+            },
+            timeout=60
+        )
+
+
+def get_chat_mode(chat_id):
+    return CHAT_MODES.get(chat_id, "auto")
+
+
+def set_chat_mode(chat_id, mode):
+    CHAT_MODES[chat_id] = mode
+
+
 # ==============================
 # OPENAI
 # ==============================
@@ -119,6 +153,58 @@ def ask_gemini(prompt):
 
 
 # ==============================
+# ROUTING AUTO
+# ==============================
+
+def choose_best_model(prompt):
+    p = prompt.lower()
+
+    code_keywords = [
+        "code", "python", "javascript", "js", "html", "css",
+        "bug", "erreur", "api", "script", "fonction", "programme",
+        "railway", "telegram", "flask", "sql"
+    ]
+
+    fast_keywords = [
+        "résume", "resume", "résumé", "summary", "court",
+        "traduis", "traduis", "translate", "reformule",
+        "simple", "vite", "rapide", "short"
+    ]
+
+    deep_keywords = [
+        "analyse", "stratégie", "strategie", "vision", "philosophie",
+        "raisonnement", "futur", "comparaison", "compare",
+        "business", "plan", "architecture", "concept"
+    ]
+
+    if any(k in p for k in code_keywords):
+        return "openai"
+
+    if any(k in p for k in fast_keywords):
+        return "gemini"
+
+    if any(k in p for k in deep_keywords):
+        return "claude"
+
+    return "claude"
+
+
+def ask_auto(prompt):
+    model = choose_best_model(prompt)
+
+    if model == "openai":
+        answer = ask_openai(prompt)
+        return f"🤖 NOVA5 — MODE AUTO\n\n🧠 IA choisie: OPENAI\n\n{answer}"
+
+    if model == "gemini":
+        answer = ask_gemini(prompt)
+        return f"🤖 NOVA5 — MODE AUTO\n\n🧠 IA choisie: GEMINI\n\n{answer}"
+
+    answer = ask_claude(prompt)
+    return f"🤖 NOVA5 — MODE AUTO\n\n🧠 IA choisie: CLAUDE\n\n{answer}"
+
+
+# ==============================
 # MULTI IA
 # ==============================
 
@@ -159,22 +245,8 @@ Nova5 actif.
 
 
 # ==============================
-# TELEGRAM
+# TELEGRAM WEBHOOK
 # ==============================
-
-def send_telegram(chat_id, text):
-    if not TELEGRAM_TOKEN:
-        return
-
-    requests.post(
-        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
-        json={
-            "chat_id": chat_id,
-            "text": text[:4000]
-        },
-        timeout=60
-    )
-
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -186,6 +258,51 @@ def webhook():
     chat_id = data["message"]["chat"]["id"]
     text = data["message"].get("text", "").strip()
 
+    mode = get_chat_mode(chat_id)
+
+    # /start
+    if text == "/start":
+        send_telegram(
+            chat_id,
+            "Nova5 actif.\n\n"
+            "Commandes :\n"
+            "/multi on  → active les 3 IA en permanence\n"
+            "/multi off → retour au mode auto\n"
+            "/status    → voir le mode actuel\n"
+            "/compare question → comparaison ponctuelle\n\n"
+            "Sans /compare :\n"
+            "- si multi = ON → 3 IA répondent\n"
+            "- si multi = OFF → Nova5 choisit la meilleure IA automatiquement"
+        )
+        return jsonify({"ok": True})
+
+    # /status
+    if text == "/status":
+        send_telegram(
+            chat_id,
+            f"🤖 NOVA5 — STATUS\n\nMode actuel : {mode.upper()}"
+        )
+        return jsonify({"ok": True})
+
+    # /multi on
+    if text == "/multi on":
+        set_chat_mode(chat_id, "multi")
+        send_telegram(
+            chat_id,
+            "✅ Mode MULTI activé.\n\nToutes tes prochaines questions seront envoyées à OpenAI + Claude + Gemini."
+        )
+        return jsonify({"ok": True})
+
+    # /multi off
+    if text == "/multi off":
+        set_chat_mode(chat_id, "auto")
+        send_telegram(
+            chat_id,
+            "✅ Mode AUTO activé.\n\nNova5 choisira automatiquement l’IA la plus adaptée pour chaque question."
+        )
+        return jsonify({"ok": True})
+
+    # /compare ponctuel
     if text.startswith("/compare"):
         question = text.replace("/compare", "", 1).strip()
 
@@ -196,9 +313,17 @@ def webhook():
         send_telegram(chat_id, "Nova5 analyse multi-IA...")
         response = nova5_compare(question)
         send_telegram(chat_id, response)
+        return jsonify({"ok": True})
 
+    # Question normale
+    if mode == "multi":
+        send_telegram(chat_id, "Nova5 analyse multi-IA...")
+        response = nova5_compare(text)
+        send_telegram(chat_id, response)
     else:
-        send_telegram(chat_id, "Nova5 actif. Commande principale : /compare ta question")
+        send_telegram(chat_id, "Nova5 choisit la meilleure IA...")
+        response = ask_auto(text)
+        send_telegram(chat_id, response)
 
     return jsonify({"ok": True})
 
@@ -206,6 +331,11 @@ def webhook():
 # ==============================
 # HEALTH
 # ==============================
+
+@app.route("/", methods=["GET"])
+def home():
+    return "Nova5 AI Server Running"
+
 
 @app.route("/health", methods=["GET"])
 def health():
