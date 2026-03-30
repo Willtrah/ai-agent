@@ -1,232 +1,229 @@
-import asyncio
-import logging
 import os
-import threading
 import time
-from typing import Any
+import logging
+import threading
 
-from dotenv import load_dotenv
-from flask import Flask, jsonify
+from flask import Flask, request
 
-load_dotenv()
+import requests
 
-# ---------- Logging ----------
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="%(asctime)s - %(levelname)s - %(message)s",
-)
-logger = logging.getLogger("ai-agent")
+# ================================
+# Configuration
+# ================================
 
-# ---------- Environment ----------
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 
-DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "gpt-4.1-mini")
-FALLBACK_MODEL = os.getenv("FALLBACK_MODEL", "gemini-2.5-flash")
-MEMORY_DB_PATH = os.getenv("MEMORY_DB_PATH", "/app/memory.db")
-LOW_RAM_MODE = os.getenv("LOW_RAM_MODE", "true").lower() == "true"
-MAX_CONCURRENT_AGENTS = int(os.getenv("MAX_CONCURRENT_AGENTS", "3"))
-BATCH_SIZE = int(os.getenv("BATCH_SIZE", "5"))
-MAX_MEMORY_ITEMS = int(os.getenv("MAX_MEMORY_ITEMS", "10000"))
-AGENT_TIMEOUT = int(os.getenv("AGENT_TIMEOUT", "120"))
-TELEGRAM_ALLOWED_USERS_RAW = os.getenv("TELEGRAM_ALLOWED_USERS", "")
-TELEGRAM_ALLOWED_USERS = {
-    int(x.strip()) for x in TELEGRAM_ALLOWED_USERS_RAW.split(",") if x.strip().isdigit()
-}
+logging.basicConfig(level=logging.INFO)
 
-# ---------- App ----------
 app = Flask(__name__)
 
-BOOT_STATE: dict[str, Any] = {
-    "booted": False,
-    "telegram_started": False,
-    "last_heartbeat": None,
-    "last_error": None,
-}
+print("AI Multi-Agent System Started")
 
 
-def env_report() -> dict[str, Any]:
-    return {
-        "telegram": bool(TELEGRAM_BOT_TOKEN),
-        "openai": bool(OPENAI_API_KEY),
-        "gemini": bool(GEMINI_API_KEY),
-        "anthropic": bool(ANTHROPIC_API_KEY),
-        "default_model": DEFAULT_MODEL,
-        "fallback_model": FALLBACK_MODEL,
-        "memory_db_path": MEMORY_DB_PATH,
-        "low_ram_mode": LOW_RAM_MODE,
-        "max_concurrent_agents": MAX_CONCURRENT_AGENTS,
-        "batch_size": BATCH_SIZE,
-        "max_memory_items": MAX_MEMORY_ITEMS,
-        "agent_timeout": AGENT_TIMEOUT,
-        "allowed_users_count": len(TELEGRAM_ALLOWED_USERS),
+# ================================
+# OpenAI
+# ================================
+
+def ask_openai(prompt):
+
+    url = "https://api.openai.com/v1/chat/completions"
+
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json"
     }
 
+    data = {
+        "model": "gpt-4.1-mini",
+        "messages": [
+            {"role": "user", "content": prompt}
+        ]
+    }
 
-@app.get("/")
-def home():
-    return "AI Agent Running", 200
+    response = requests.post(url, headers=headers, json=data)
+    result = response.json()
 
-
-@app.get("/health")
-def health():
-    return jsonify(
-        {
-            "status": "ok",
-            "boot_state": BOOT_STATE,
-            "env": env_report(),
-        }
-    )
+    return result["choices"][0]["message"]["content"]
 
 
-@app.get("/status")
-def status():
-    return jsonify(
-        {
-            "message": "AI Multi-Agent System Started",
-            "boot_state": BOOT_STATE,
-            "env": env_report(),
-        }
-    )
+# ================================
+# Claude
+# ================================
+
+def ask_claude(prompt):
+
+    url = "https://api.anthropic.com/v1/messages"
+
+    headers = {
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json"
+    }
+
+    data = {
+        "model": "claude-3-sonnet-20240229",
+        "max_tokens": 1000,
+        "messages": [
+            {"role": "user", "content": prompt}
+        ]
+    }
+
+    response = requests.post(url, headers=headers, json=data)
+    result = response.json()
+
+    return result["content"][0]["text"]
 
 
-# ---------- Background Worker ----------
-def heartbeat_loop() -> None:
-    logger.info("Background heartbeat worker started")
+# ================================
+# Gemini
+# ================================
+
+def ask_gemini(prompt):
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+
+    headers = {
+        "Content-Type": "application/json"
+    }
+
+    data = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt}
+                ]
+            }
+        ]
+    }
+
+    response = requests.post(url, headers=headers, json=data)
+    result = response.json()
+
+    return result["candidates"][0]["content"]["parts"][0]["text"]
+
+
+# ================================
+# Multi IA réel
+# ================================
+
+def ask_all_models(prompt):
+
+    responses = {}
+
+    try:
+        start = time.time()
+        responses["openai"] = ask_openai(prompt)
+        responses["openai_time"] = round(time.time() - start, 2)
+    except Exception as e:
+        responses["openai"] = f"Erreur OpenAI : {e}"
+
+    try:
+        start = time.time()
+        responses["claude"] = ask_claude(prompt)
+        responses["claude_time"] = round(time.time() - start, 2)
+    except Exception as e:
+        responses["claude"] = f"Erreur Claude : {e}"
+
+    try:
+        start = time.time()
+        responses["gemini"] = ask_gemini(prompt)
+        responses["gemini_time"] = round(time.time() - start, 2)
+    except Exception as e:
+        responses["gemini"] = f"Erreur Gemini : {e}"
+
+    return responses
+
+
+# ================================
+# Compare
+# ================================
+
+def compare_models(prompt):
+
+    results = ask_all_models(prompt)
+
+    return f"""
+
+🤖 NOVA5 — MULTI IA
+
+---------------------
+
+🧠 OPENAI ({results.get('openai_time','?')}s)
+
+{results['openai']}
+
+---------------------
+
+🧠 CLAUDE ({results.get('claude_time','?')}s)
+
+{results['claude']}
+
+---------------------
+
+🧠 GEMINI ({results.get('gemini_time','?')}s)
+
+{results['gemini']}
+
+"""
+
+
+# ================================
+# Telegram
+# ================================
+
+def send_telegram(chat_id, text):
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+
+    data = {
+        "chat_id": chat_id,
+        "text": text[:4000]
+    }
+
+    requests.post(url, data=data)
+
+
+@app.route("/", methods=["POST"])
+def telegram_webhook():
+
+    data = request.json
+
+    message = data.get("message", {})
+    chat_id = message.get("chat", {}).get("id")
+    text = message.get("text", "")
+
+    if not text:
+        return "ok"
+
+    if text.startswith("/compare"):
+
+        question = text.replace("/compare", "").strip()
+
+        send_telegram(chat_id, "Nova5 analyse multi-IA...")
+
+        response = compare_models(question)
+
+        send_telegram(chat_id, response)
+
+    else:
+
+        send_telegram(chat_id, "Nova5 actif. Utilise /compare question")
+
+    return "ok"
+
+
+# ================================
+# Heartbeat
+# ================================
+
+def heartbeat():
+
     while True:
-        try:
-            BOOT_STATE["last_heartbeat"] = int(time.time())
-            logger.info("Heartbeat OK")
-            time.sleep(60)
-        except Exception as exc:  # pragma: no cover
-            BOOT_STATE["last_error"] = str(exc)
-            logger.exception("Heartbeat loop error: %s", exc)
-            time.sleep(10)
+        logging.info("Heartbeat OK")
+        time.sleep(60)
 
 
-# ---------- Telegram Bot ----------
-def start_telegram_bot() -> None:
-    if not TELEGRAM_BOT_TOKEN:
-        logger.warning("TELEGRAM_BOT_TOKEN missing; Telegram bot disabled")
-        return
-
-    try:
-        from telegram import Update
-        from telegram.ext import (
-            ApplicationBuilder,
-            CommandHandler,
-            ContextTypes,
-            MessageHandler,
-            filters,
-        )
-    except Exception as exc:  # pragma: no cover
-        BOOT_STATE["last_error"] = f"telegram import error: {exc}"
-        logger.exception("Telegram imports failed")
-        return
-
-    async def reject_if_not_allowed(update: Update) -> bool:
-        user = update.effective_user
-        if not user:
-            return True
-        if TELEGRAM_ALLOWED_USERS and user.id not in TELEGRAM_ALLOWED_USERS:
-            if update.message:
-                await update.message.reply_text("Accès refusé.")
-            return True
-        return False
-
-    async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if await reject_if_not_allowed(update):
-            return
-        await update.message.reply_text(
-            "AI-System actif. Commandes: /status /health /ping"
-        )
-
-    async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if await reject_if_not_allowed(update):
-            return
-        text = (
-            "STATUT SYSTÈME\n"
-            f"OpenAI: {'OK' if OPENAI_API_KEY else 'MANQUANT'}\n"
-            f"Gemini: {'OK' if GEMINI_API_KEY else 'MANQUANT'}\n"
-            f"Claude: {'OK' if ANTHROPIC_API_KEY else 'MANQUANT'}\n"
-            f"Default model: {DEFAULT_MODEL}\n"
-            f"Fallback model: {FALLBACK_MODEL}\n"
-            f"Heartbeat: {BOOT_STATE['last_heartbeat']}"
-        )
-        await update.message.reply_text(text)
-
-    async def cmd_health(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if await reject_if_not_allowed(update):
-            return
-        await update.message.reply_text("/health disponible sur Railway")
-
-    async def cmd_ping(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if await reject_if_not_allowed(update):
-            return
-        await update.message.reply_text("pong")
-
-    async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if await reject_if_not_allowed(update):
-            return
-        user_text = update.message.text if update.message else ""
-        await update.message.reply_text(
-            "Requête reçue. Infrastructure active.\n"
-            f"Message: {user_text[:500]}"
-        )
-
-    async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
-        BOOT_STATE["last_error"] = str(context.error)
-        logger.exception("Telegram handler error: %s", context.error)
-
-    async def runner() -> None:
-        app_tg = ApplicationBuilder().token(TELEGRAM_BOT_TOKEN).build()
-        app_tg.add_handler(CommandHandler("start", cmd_start))
-        app_tg.add_handler(CommandHandler("status", cmd_status))
-        app_tg.add_handler(CommandHandler("health", cmd_health))
-        app_tg.add_handler(CommandHandler("ping", cmd_ping))
-        app_tg.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-        app_tg.add_error_handler(error_handler)
-
-        logger.info("Starting Telegram polling...")
-        BOOT_STATE["telegram_started"] = True
-        await app_tg.initialize()
-        await app_tg.start()
-        await app_tg.updater.start_polling(drop_pending_updates=True)
-        while True:
-            await asyncio.sleep(3600)
-
-    try:
-        asyncio.run(runner())
-    except Exception as exc:  # pragma: no cover
-        BOOT_STATE["telegram_started"] = False
-        BOOT_STATE["last_error"] = f"telegram runtime error: {exc}"
-        logger.exception("Telegram bot crashed: %s", exc)
-
-
-def boot_once() -> None:
-    if BOOT_STATE["booted"]:
-        return
-
-    logger.info("AI Multi-Agent System Started")
-    logger.info("Environment report: %s", env_report())
-
-    if not OPENAI_API_KEY:
-        logger.warning("OPENAI_API_KEY missing")
-    if not GEMINI_API_KEY:
-        logger.warning("GEMINI_API_KEY missing")
-    if not ANTHROPIC_API_KEY:
-        logger.warning("ANTHROPIC_API_KEY missing")
-
-    heartbeat_thread = threading.Thread(target=heartbeat_loop, daemon=True)
-    heartbeat_thread.start()
-
-    telegram_thread = threading.Thread(target=start_telegram_bot, daemon=True)
-    telegram_thread.start()
-
-    BOOT_STATE["booted"] = True
-
-
-boot_once()
+threading.Thread(target=heartbeat, daemon=True).start()
