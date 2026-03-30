@@ -6,19 +6,13 @@ app = Flask(__name__)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-RAILWAY_URL = os.getenv("RAILWAY_STATIC_URL")
 
-# ===============================
-# HOME
-# ===============================
+RAILWAY_URL = "https://ai-agent-production-9fff.up.railway.app"
 
 @app.route("/")
 def home():
     return "Nova5 AI Server Running"
 
-# ===============================
-# HEALTH CHECK
-# ===============================
 
 @app.route("/health")
 def health():
@@ -28,9 +22,6 @@ def health():
         "railway": "connected"
     })
 
-# ===============================
-# TELEGRAM WEBHOOK
-# ===============================
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -45,9 +36,8 @@ def webhook():
 
     if text.startswith("/compare"):
 
-        reply = "🤖 Nova5 analyse multi-IA...\n\n"
+        reply = "🤖 NOVA5 — MULTI IA\n\n"
 
-        # OpenAI
         try:
             openai_response = requests.post(
                 "https://api.openai.com/v1/chat/completions",
@@ -74,10 +64,6 @@ def webhook():
     return "ok"
 
 
-# ===============================
-# SEND TELEGRAM
-# ===============================
-
 def send_telegram(chat_id, text):
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -88,14 +74,10 @@ def send_telegram(chat_id, text):
     })
 
 
-# ===============================
-# SET WEBHOOK
-# ===============================
-
 @app.route("/setwebhook")
 def set_webhook():
 
-    webhook_url = f"https://{RAILWAY_URL}/webhook"
+    webhook_url = f"{RAILWAY_URL}/webhook"
 
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/setWebhook?url={webhook_url}"
 
@@ -103,10 +85,6 @@ def set_webhook():
 
     return r.text
 
-
-# ===============================
-# RUN
-# ===============================
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080)
